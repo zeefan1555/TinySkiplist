@@ -5,9 +5,11 @@
 #include <cstring>
 #include <mutex>
 #include <fstream>
+#include <string>
+#define STORE_FILE "strore/dumpFile"
 using  namespace  std;
 
-std::mutex mtx;     // mutex for critical section
+std::mutex mtx;     //锁
 std::string delimiter = ":";
 
 
@@ -17,8 +19,8 @@ public:
   Node(){};
   Node(K k, V v, int);
   ~Node();
-  K get_Key() const; // K return key
-  V get_value() const; //~
+  K get_key() const;
+  V get_value() const;
 
   void set_value(V);
 
@@ -47,7 +49,7 @@ Node<K, V>::~Node() {
 };
 
 template<typename K, typename V>
-K Node<K, V> :: get_Key() const{
+K Node<K, V> :: get_key() const{
   return key;
 };
 
@@ -77,7 +79,7 @@ public:
   int size();
 
 private:
-  void get_key_value_from_string(const std::string& str, std::string* key, std::string& value);
+  void get_key_value_from_string(const std::string& str, std::string* key, std::string* value);
   bool is_valid_string(const std::string& str);
 
 private:
@@ -109,7 +111,7 @@ int SkipList<K, V>::insert_element(const K key, const V value) {
   memset(update, 0, sizeof(Node<K, V>*)*(_max_level+1));
 
   for(int i = _skip_list_level; i>= 0; i--){
-    while(current->forward[i] != NULL && current->forward[i]->get_key() < key){
+    while(current->forward[i] != NULL && current->forward[i]->get_key() < key){ //在每一层中, 达到最后一个元素 "或者"  >= key 时停止
       current = current->forward[i];
     }
     update[i] = current;
@@ -151,14 +153,179 @@ int SkipList<K, V>::insert_element(const K key, const V value) {
 }
 
 //展示链表
-//template<typename  K, typename V>
-//void SkipList<K, V>::display_list() {
-//  std::cout<< "\n******* Skip List*******" <<"\n";
-//  for(int i = 0; i <= _skip_list_level; i++){
-//    Node<K,V> *node = this->_header->forward[i];
-//    st
-//  }
-//}
+template<typename  K, typename V>
+void SkipList<K, V>::display_list() {
+  std::cout<< "\n******* Skip List*******" <<"\n";
+  for(int i = _skip_list_level; i >= 0; i-- ){
+    Node<K,V> *node = this->_header->forward[i];
+    cout<<"level "<< i << ": ";
+    while(node != NULL){
+      cout << node->get_key()<< ":" << node->get_value() << ";";
+      node = node->forward[i];
+    }
+    cout << endl;
+
+  }
+}
+
+//从内存中读取数据
+
+template<typename  K, typename V>
+void SkipList<K, V>::dump_file(){
+  cout << "--------------dump_file------------------" << endl;
+  _file_writer.open(STORE_FILE);
+  Node<K,V> *node = this->_header->forward[0];
+
+  while(node != NULL){
+    _file_writer<< node->get_key() << ":" << node->get_value()<<"\n";
+    cout<< node->get_key() << ":" << node->get_value() << "; \n";
+    node = node->forward[0];
+  }
+  _file_writer.flush();//❓
+  _file_writer.close();
+  return ;
+}
+
+//缓存到磁盘
+template<typename  K, typename  V>
+void SkipList<K, V> ::load_file() {
+  _file_reader.open(STORE_FILE);
+  cout<<"-------------load_file-------------" <<endl;
+  std::string line;
+  std::string* key = new string();
+  std::string* value = new string();
+  while(getline(_file_reader, line)){
+    get_key_value_from_string(line, key, value);
+    if(key->empty() || value->empty()){
+      continue ;
+    }
+    insert_element(*key, *value);
+    cout<<"key:" << *key << "value: " << *value << endl;
+
+  }
+  _file_writer.close();
+}
+
+//获取当前跳表的数量
+template<typename K, typename  V>
+int SkipList<K,V> :: size(){
+  return _element_count;
+}
+
+template<typename K, typename V>
+void SkipList<K,V>::get_key_value_from_string(const std::string &str, std::string* key, std::string* value) {
+  if(!is_valid_string(str)){
+    return;
+  }
+  *key = str.substr(0, str.find(delimiter));
+  *value = str.substr(str.find(delimiter)+1, str.length());
+}
+
+template<typename K, typename V>
+bool SkipList<K, V> ::is_valid_string(const std::string &str) {
+  if(str.empty()){
+    return false;
+  }
+  if(str.find(delimiter) == std::string::npos){ //❓
+    return false;
+  }
+  return true;
+}
+
+//删除元素
+template<typename  K, typename  V>
+void SkipList<K, V> ::delete_element(K key) {
+  mtx.lock();
+  Node<K, V> *current = this->_header;
+  Node<K, V> *update[_max_level+1];
+  meset(update, 0, sizeof(Node<K, V>*)*(_max_level+1));
+
+  //从最高层开始
+  for(int i = _skip_list_level; i >= 0; i--){
+    while(current->forward[i] != NULL && current->forward[i]->get_key() < key){
+      current = current->forward[i];
+    }
+    update[i] = current;
+  }
+
+  current = current->forward[0];
+  if(current != NULL && current->get_key() == key){
+    for(int i = 0; i <= _skip_list_level; i++){
+      if(update[i]->forward[i] != current) break;
+      update[i]->forward[i] = current->forward[i];
+    }
+    //移除没有元素的层
+    while(_skip_list_level > 0 && _header->forward[_skip_list_level] == 0){
+      _skip_list_level--;
+    }
+
+    std::cout<< "成功删除了 key" <<key << std::endl;
+    _element_count--;
+  }
+  mtx.unlock();
+  return;
+}
+
+//搜索元素
+template<typename K, typename V>
+bool SkipList<K, V> ::search_element(K key) {
+  std::cout<< "----------search_elemet------------" << std::endl;
+  Node<K, V> *current = _header;
+
+  //从最高层开始
+  for(int i = _skip_list_level; i >= 0; i--){
+    while(current->forward[i] && current->forward[i]->get_key() < key){
+      current = current->forward[i];
+    }
+  }
+  current = current->forward[0];
+
+  if(current && current->get_key() == key){
+    std::cout<<"Found Key: " << key << ", Calue :"  << current->get_value()<<std::endl;
+    return true;
+  }
+  std::cout<<"Not Found Key: "<< key << std::endl;
+    return false;
+}
+
+//构造跳表
+template<typename K, typename V>
+SkipList<K, V>::SkipList(int max_level) {
+  this->_max_level = max_level;
+  this->_skip_list_level = 0;
+  this->_element_count = 0;
+
+  //创建头结点
+  K k;
+  V v;
+  this->_header = new Node<K,V>(k, v , _max_level);
+
+
+
+};
+
+template<typename K, typename V>
+SkipList<K, V> ::~SkipList() {
+  if(_file_writer.is_open()){
+    _file_writer.close();
+  }
+  if(_file_reader.is_open()){
+    _file_reader.close();
+  }
+  delete _header;
+}
+
+template<typename K, typename V>
+int SkipList<K,V>::get_random_level() {
+  int k = 1;
+  while( rand() % 2){ //奇数+1, 0.5 的概率
+    k++;
+  }
+  k = (k < _max_level) ? k : _max_level;
+  return k;
+};
+
+
 
 
 
